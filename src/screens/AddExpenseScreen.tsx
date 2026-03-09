@@ -1,382 +1,460 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Picker } from '@react-native-picker/picker';
-import { useIsFocused } from '@react-navigation/native';
-import React, { useEffect, useState } from 'react';
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { Picker } from "@react-native-picker/picker";
+import { useIsFocused } from "@react-navigation/native";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
   Platform,
   Pressable,
-  ScrollView, // We need ScrollView for the form + list
-  StatusBar,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../lib/supabaseClient';
+  View,
+} from "react-native";
+import { supabase } from "../lib/supabaseClient";
+import {
+  DEFAULT_CATEGORIES,
+  getCategoryColor,
+  getCategoryIcon,
+  useAppStore,
+} from "../store/useAppStore";
 
-//categories
-const CATEGORII_PREDEFINITE = [
-  "Food", "Transport", "Bills", "Entertainment", "Shopping", "Health", "Other"
-];
-
-// Type definition 
-type Cheltuiala = {
+// Type definition
+type ExpenseItem = {
   id: string;
-  suma: number;
-  descriere: string;
-  data: Date;
-  categorie: string;
-};
-//Mapare nume categorie pentru conita din libraria MaterialCommunityIcons.
-const ICONITE_CATEGORII: { [key: string]: any } = {
-  "Food": "food-variant",
-  "Transport": "car",
-  "Bills": "file-document-outline",
-  "Entertainment": "gamepad-variant",
-  "Shopping": "shopping",
-  "Health": "heart-pulse",
-  "Other": "dots-horizontal-circle",
-}
-//Mapare nume categorie(culoarea).
-const CULORI_CATEGORII: { [key: string]: string } = {
-  "Food": "#FF6384",
-  "Transport": "#36A2EB",
-  "Bills": "#FFCE56",
-  "Entertainment": "#4BC0C0",
-  "Shopping": "#9966FF",
-  "Health": "#FF9F40",
-  "Other": "#C9CBCF",
+  amount: number;
+  description: string;
+  date: Date;
+  category: string;
 };
 
 // Receives navigation (for Update) and authStatus (for logic)
-export default function AddExpenseScreen({ navigation, authStatus }: { navigation: any, authStatus: string }) {
-  
-  // Form states
-  const [suma, setSuma] = useState('');
-  const [descriere, setDescriere] = useState<string>('');
-  const [categorie, setCategorie] = useState(CATEGORII_PREDEFINITE[0]);
+export default function AddExpenseScreen({ navigation }: { navigation: any }) {
+  const authStatus = useAppStore((state) => state.authStatus);
+  const customCategories = useAppStore((state) => state.customCategories);
+  const addCustomCategory = useAppStore((state) => state.addCustomCategory);
+  const allCategories = useMemo(
+    () => [...DEFAULT_CATEGORIES, ...customCategories],
+    [customCategories],
+  );
 
-  //pentru adaugarea datei de catre user
-  const [dataAleasa, setDataAleasa] = useState(new Date());//apate data curenta. 
-  const [showDataPicker, setShowDataPicker] = useState(false); //am pus calendarul ca sa poata modifica userul data.
-  const onChangeDate = (event: any, selectedDate?: Date) => {
-    const current = selectedDate || dataAleasa;
-    // dispare dupa selectia userului.
-    if (Platform.OS === 'android')  setShowDataPicker(false);
-    setDataAleasa(current);
+  // Form states
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState<string>("");
+  const [category, setCategory] = useState(DEFAULT_CATEGORIES[0]);
+  const [newCategory, setNewCategory] = useState("");
+
+  useEffect(() => {
+    if (!allCategories.includes(category)) {
+      setCategory(allCategories[0] ?? DEFAULT_CATEGORIES[0]);
+    }
+  }, [allCategories, category]);
+
+  // Selected date for the expense form.
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDataPicker, setShowDataPicker] = useState(false); // Date picker visibility.
+  const onChangeDate = (event: any, pickedDate?: Date) => {
+    const current = pickedDate || selectedDate;
+    // Close picker on Android after selection.
+    if (Platform.OS === "android") setShowDataPicker(false);
+    setSelectedDate(current);
   };
-  
+
   // List states
-  const [cheltuieli, setCheltuieli] = useState<Cheltuiala[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const isFocused = useIsFocused(); // Hook for reloading
 
-  // Logica pentru incaracarea cheltuielilor
+  // Currency state
+  const [currency, setCurrency] = useState("RON"); // Default fallback.
+  // Load selected currency from settings.
   useEffect(() => {
-    const incarcaCheltuieli = async () => {
+    const loadCurrency = async () => {
       try {
-        let dateIncarcate: Cheltuiala[] = []; 
-        if (authStatus === 'guest') {
-          const cheltuieliJson = await AsyncStorage.getItem('cheltuieliSalvate');
-          if (cheltuieliJson !== null) {
-            const cheltuieliSalvate = JSON.parse(cheltuieliJson);
-            dateIncarcate = cheltuieliSalvate.map((c: any) => ({
-              ...c,
-              data: new Date(c.data),
+        const savedCurrency = await AsyncStorage.getItem("userCurrency");
+        if (savedCurrency) {
+          setCurrency(savedCurrency);
+        }
+      } catch (e) {
+        console.error("Failed to load currency", e);
+      }
+    };
+    if (isFocused) {
+      loadCurrency();
+    }
+  }, [isFocused]);
+
+  // Load expenses based on auth mode.
+  useEffect(() => {
+    const loadExpenses = async () => {
+      try {
+        let loadedExpenses: ExpenseItem[] = [];
+        if (authStatus === "guest") {
+          const savedExpensesJson = await AsyncStorage.getItem("savedExpenses");
+          if (savedExpensesJson !== null) {
+            const savedExpenses = JSON.parse(savedExpensesJson);
+            loadedExpenses = savedExpenses.map((c: any) => ({
+              id: String(c.id ?? Math.random().toString()),
+              amount: Number(c.amount ?? 0),
+              description: String(c.description ?? ""),
+              category: String(c.category ?? "Other"),
+              date: new Date(c.date ?? Date.now()),
             }));
           }
-        } else if (authStatus === 'loggedIn') {
+        } else if (authStatus === "loggedIn") {
           const { data, error } = await supabase
-            .from('cheltuieli')
-            .select('*')
-            .order('data', { ascending: false });
+            .from("expenses")
+            .select("*")
+            .order("date", { ascending: false });
           if (error) throw error;
           if (data) {
-            dateIncarcate = data.map((c: any) => ({
-              ...c,
-              id: c.id.toString(), // face id ul string
-              data: new Date(c.data),
+            loadedExpenses = data.map((c: any) => ({
+              id: c.id.toString(),
+              amount: Number(c.amount ?? 0),
+              description: String(c.description ?? ""),
+              category: String(c.category ?? "Other"),
+              date: new Date(c.date ?? Date.now()),
             }));
           }
         }
-        setCheltuieli(dateIncarcate);
+        setExpenses(loadedExpenses);
       } catch (e) {
         console.error("Error loading expenses:", e);
       } finally {
         setIsLoading(false);
       }
     };
-    
+
     if (isFocused) {
-      incarcaCheltuieli(); 
+      loadExpenses();
     }
-  }, [authStatus, isFocused]); 
+  }, [authStatus, isFocused]);
 
-  // logica de salvare la guest
+  // Persist expenses in guest mode.
   useEffect(() => {
-    const salveazaCheltuieli = async () => {
+    const saveExpenses = async () => {
       try {
-        const cheltuieliJson = JSON.stringify(cheltuieli);
-        await AsyncStorage.setItem('cheltuieliSalvate', cheltuieliJson);
+        const savedExpensesJson = JSON.stringify(expenses);
+        await AsyncStorage.setItem("savedExpenses", savedExpensesJson);
       } catch (e) {
-        console.log('Error saving expenses:', e);
-      } 
+        console.log("Error saving expenses:", e);
+      }
     };
-    if (authStatus === 'guest' && !isLoading) {
-      salveazaCheltuieli(); 
+    if (authStatus === "guest" && !isLoading) {
+      saveExpenses();
     }
-  }, [cheltuieli, authStatus, isLoading]);
+  }, [expenses, authStatus, isLoading]);
 
-  //logica pt butonul add
-  const handleAdaugaCheltuiala = async () => {
-
-    const descriereSafe = String(descriere || "");
-    const sumaNumber = parseFloat(suma);
-    if (!descriereSafe.trim() || isNaN(sumaNumber) || sumaNumber <= 0) {
-      Alert.alert('Error', 'Please enter the amount and description.');
+  // Add expense action.
+  const handleAddExpense = async () => {
+    const safeDescription = String(description || "");
+    const amountNumber = parseFloat(amount);
+    if (!safeDescription.trim() || isNaN(amountNumber) || amountNumber <= 0) {
+      Alert.alert("Error", "Please enter the amount and description.");
       return;
     }
-    const nouaData = dataAleasa;
-    const cheltuialaDeBaza = {
-      suma: parseFloat(suma), 
-      descriere: descriereSafe.trim(), 
-      data: nouaData, 
-      categorie: categorie,
+    const expenseDate = selectedDate;
+    const baseExpense = {
+      amount: parseFloat(amount),
+      description: safeDescription.trim(),
+      date: expenseDate,
+      category: category,
     };
 
-    if (authStatus === 'guest') {
-      const cheltuialaNouaGuest = {
-        ...cheltuialaDeBaza,
+    if (authStatus === "guest") {
+      const newGuestExpense = {
+        ...baseExpense,
         id: Math.random().toString(),
       };
-      setCheltuieli(cheltuieliAnterioare => [cheltuialaNouaGuest, ...cheltuieliAnterioare]);
-    } else if (authStatus === 'loggedIn') {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return; 
+      setExpenses((previousExpenses) => [newGuestExpense, ...previousExpenses]);
+    } else if (authStatus === "loggedIn") {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
 
-      const cheltuialaNouaSupabase = {
-        ...cheltuialaDeBaza,
+      const newSupabaseExpense = {
+        ...baseExpense,
         user_id: user.id,
-        data: nouaData.toISOString(),
+        date: expenseDate.toISOString(),
       };
-      const { data: dataInserat, error } = await supabase
-        .from('cheltuieli')
-        .insert(cheltuialaNouaSupabase)
-        .select() 
+      const { data: insertedData, error } = await supabase
+        .from("expenses")
+        .insert(newSupabaseExpense)
+        .select()
         .single();
       if (error) {
-        Alert.alert('Supabase Error', error.message);
-      } else if (dataInserat) {
-        const cheltuialaFinala = {
-          ...dataInserat,
-          id: dataInserat.id.toString(),
-          data: new Date(dataInserat.data),
+        Alert.alert("Supabase Error", error.message);
+      } else if (insertedData) {
+        const finalExpense = {
+          ...insertedData,
+          id: insertedData.id.toString(),
+          date: new Date(insertedData.date ?? insertedData.data),
         };
-        setCheltuieli(cheltuieliAnterioare => [cheltuialaFinala, ...cheltuieliAnterioare]);
+        setExpenses((previousExpenses) => [finalExpense, ...previousExpenses]);
       }
     }
-    setSuma('');
-    setDescriere('');
-    setCategorie(CATEGORII_PREDEFINITE[0]); // Reset picker
+    setAmount("");
+    setDescription("");
+    setCategory(allCategories[0] ?? DEFAULT_CATEGORIES[0]);
   };
 
-  // logica pt butonul delete
-  const handleStergeCheltuiala = (id: string, suma: number) => {
+  const handleCreateCategory = async () => {
+    const created = await addCustomCategory(newCategory);
+    if (!created) {
+      Alert.alert("Category", "Category already exists or is invalid.");
+      return;
+    }
+    const createdName = newCategory.trim();
+    setCategory(createdName);
+    setNewCategory("");
+  };
+
+  // Delete expense action.
+  const handleDeleteExpense = (id: string, amountValue: number) => {
     Alert.alert(
       "Delete Confirmation",
-      `Are you sure you want to delete the ${suma.toFixed(2)} RON expense?`,
+      `Are you sure you want to delete the ${amountValue.toFixed(2)} ${currency} expense?`,
       [
         { text: "Cancel", style: "cancel" },
-        { 
-          text: "Delete", 
-          style: "destructive", 
-          onPress: async () => {
-            if (authStatus === 'guest') {
-              setCheltuieli(cheltuieliAnterioare => 
-                cheltuieliAnterioare.filter(c => c.id !== id)
-              );
-            } else if (authStatus === 'loggedIn') {
-              try {
-                const { error } = await supabase
-                  .from('cheltuieli')
-                  .delete()
-                  .match({ id: parseInt(id) }); 
-                if (error) throw error;
-                setCheltuieli(cheltuieliAnterioare => 
-                  cheltuieliAnterioare.filter(c => c.id !== id)
-                );
-              } catch (e: any) {
-                Alert.alert('Delete Error', e.message);
-              }
-            }
-          } 
-        }
-      ]
-    );
-  };
-
-  // logica pentru optiuni(delete, update)
-  const handleShowOptions = (item: Cheltuiala) => {
-    Alert.alert(
-      "Options",
-      "",
-      [
         {
           text: "Delete",
-          onPress: () => handleStergeCheltuiala(item.id, item.suma),
-          style: "destructive"
+          style: "destructive",
+          onPress: async () => {
+            if (authStatus === "guest") {
+              setExpenses((previousExpenses) =>
+                previousExpenses.filter((c) => c.id !== id),
+              );
+            } else if (authStatus === "loggedIn") {
+              try {
+                const { error } = await supabase
+                  .from("expenses")
+                  .delete()
+                  .eq("id", id);
+                if (error) throw error;
+                setExpenses((previousExpenses) =>
+                  previousExpenses.filter((c) => c.id !== id),
+                );
+              } catch (e: any) {
+                Alert.alert("Delete Error", e.message);
+              }
+            }
+          },
         },
-        {
-          text: "Update",
-          onPress: () => navigation.navigate('UpdateScreen', { 
-            cheltuiala: item 
-          }),
-        },
-        { text: "Cancel", style: "cancel" }
-      ]
+      ],
     );
   };
 
+  const [showForm, setShowForm] = useState(false);
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={styles.safeArea}>
       <ScrollView style={styles.container}>
-        
-        <Text style={styles.titlu}>Add an Expense</Text>
-
-        {/* --- Add Form --- */}
-        <TextInput
-          style={styles.input}
-          placeholder="Amount (e.g., 50)"
-          placeholderTextColor="#999"
-          keyboardType="numeric"
-          value={suma}
-          onChangeText={setSuma}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Description (e.g., Coffee)"
-          placeholderTextColor="#999"
-          value={String(descriere)}
-          onChangeText={(text) => setDescriere(text)}
-        />
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={categorie}
-            onValueChange={(itemValue) => setCategorie(itemValue)}
-            style={styles.picker}
-            dropdownIconColor={'#aaa'}
+        {/* --- Add Expense Button / Collapsible Form --- */}
+        {!showForm ? (
+          <Pressable
+            style={styles.buttonPrimary}
+            onPress={() => setShowForm(true)}
           >
-            {CATEGORII_PREDEFINITE.map((cat, index) => (
-              <Picker.Item label={cat} value={cat} key={index.toString()} />
-            ))}
-          </Picker>
-        </View>
+            <MaterialCommunityIcons
+              name="plus-circle-outline"
+              size={24}
+              color="white"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.buttonPrimaryText}>Add Expense</Text>
+          </Pressable>
+        ) : (
+          <View>
+            <TextInput
+              style={styles.input}
+              placeholder="Amount (e.g., 50)"
+              placeholderTextColor="#999"
+              keyboardType="numeric"
+              value={amount}
+              onChangeText={setAmount}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Description (e.g., Coffee)"
+              placeholderTextColor="#999"
+              value={String(description)}
+              onChangeText={(text) => setDescription(text)}
+            />
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={category}
+                onValueChange={(itemValue) => setCategory(itemValue)}
+                style={styles.picker}
+                dropdownIconColor={"#aaa"}
+              >
+                {allCategories.map((cat, index) => (
+                  <Picker.Item label={cat} value={cat} key={index.toString()} />
+                ))}
+              </Picker>
+            </View>
 
-        <Text style={styles.label}>Date</Text>
-        <Pressable onPress={() =>setShowDataPicker(true)}>
-          <View style={styles.input}>
-            <Text style={{ color: 'white', fontSize: 16, paddingTop: 0}}>
-              {dataAleasa.toLocaleDateString('ro-RO')}
-            </Text>
+            <View style={styles.customCategoryRow}>
+              <TextInput
+                style={styles.customCategoryInput}
+                placeholder="New category (e.g. Cat Food)"
+                placeholderTextColor="#999"
+                value={newCategory}
+                onChangeText={setNewCategory}
+              />
+              <Pressable
+                style={styles.customCategoryButton}
+                onPress={handleCreateCategory}
+              >
+                <Text style={styles.customCategoryButtonText}>Add</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.label}>Date</Text>
+            <Pressable onPress={() => setShowDataPicker(true)}>
+              <View style={styles.input}>
+                <Text style={{ color: "white", fontSize: 16, paddingTop: 0 }}>
+                  {selectedDate.toLocaleDateString("ro-RO")}
+                </Text>
+              </View>
+            </Pressable>
+            {showDataPicker && Platform.OS !== "web" && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={onChangeDate}
+                maximumDate={new Date()}
+              />
+            )}
+            <View style={styles.formButtons}>
+              <Pressable
+                style={styles.buttonPrimary}
+                onPress={() => {
+                  handleAddExpense();
+                  setShowForm(false);
+                }}
+              >
+                <MaterialCommunityIcons
+                  name="check-circle-outline"
+                  size={24}
+                  color="white"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.buttonPrimaryText}>Confirm</Text>
+              </Pressable>
+              <Pressable
+                style={styles.buttonCancel}
+                onPress={() => setShowForm(false)}
+              >
+                <Text style={styles.buttonCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
           </View>
-        </Pressable>
-        {showDataPicker && Platform.OS !== 'web' &&(
-         <DateTimePicker
-            value={dataAleasa}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={onChangeDate}
-            maximumDate={new Date()}
-         />
         )}
-        <Pressable 
-          style={styles.buttonPrimary} 
-          onPress={handleAdaugaCheltuiala} 
-        >
-        <MaterialCommunityIcons
-        name="plus-circle-outline"//numele iconitei
-        size={24}//marimea acesteia
-        color="white"//culoarea
-        style={{ marginRight: 8 }}//spatiu de 8 intre iconta si text.
-        />
-          <Text style={styles.buttonPrimaryText}>Add Expense</Text>
-        </Pressable>
 
         {/* --- Separator --- */}
         <View style={styles.separator} />
-        
-        <Text style={styles.titlu}>Expense History</Text>
+
+        <Text style={styles.title}>Expense History</Text>
 
         {/* --- Expense List --- */}
         <FlatList
-          data={cheltuieli}
+          data={expenses}
           scrollEnabled={false} // Let the main ScrollView handle scrolling
           renderItem={({ item }) => (
-            <View style={styles.listItem}>
-              <View style={[styles.iconContainer, { backgroundColor: CULORI_CATEGORII[item.categorie] || '#555' }]}>
+            <View style={styles.transactionItem}>
+              <View
+                style={[
+                  styles.iconContainer,
+                  {
+                    backgroundColor: getCategoryColor(item.category),
+                  },
+                ]}
+              >
                 <MaterialCommunityIcons
-                name={ICONITE_CATEGORII[item.categorie] || "help-circle"}
-                size={24}
-                color="white"
+                  name={getCategoryIcon(item.category) as any}
+                  size={24}
+                  color="white"
                 />
               </View>
-              <View style={styles.listItemContinut}>
-                <View style={styles.listItemAntet}>
-                  <Text style={styles.listTextDescriere}>{item.descriere}</Text>
-                  <Text style={styles.listTextSuma}>{item.suma.toFixed(2)} RON</Text>
-                </View>
-                <View style={styles.listItemDetalii}>
-                  <Text style={styles.listTextCategorie}>{item.categorie}</Text>
-                  <Text style={styles.listTextData}>{item.data.toLocaleDateString('en-US')}</Text>
-                </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.transName}>{item.description}</Text>
+                <Text style={styles.transDate}>
+                  {item.date.toLocaleDateString("en-US")} •{" "}
+                  {item.category ?? "Other"}
+                </Text>
               </View>
-              <Pressable
-                onPress={() => handleShowOptions(item)}
-                style={styles.optionsButton}
+              <Text style={styles.transValue}>
+                {Number(item.amount ?? 0).toFixed(2)} {currency}
+              </Text>
+              <View style={styles.transActions}>
+                <Pressable
+                  onPress={() => {
+                    const { date, ...rest } = item as any;
+                    navigation.navigate("UpdateScreen", {
+                      expense: { ...rest, date: date.toISOString() },
+                      returnTo: "AddExpenseScreen",
+                    });
+                  }}
+                  style={styles.actionIcon}
                 >
-                <MaterialCommunityIcons name="dots-vertical" size={24} color= "#aaa" />
-              </Pressable>
+                  <MaterialCommunityIcons
+                    name="pencil"
+                    size={20}
+                    color="#4BC0C0"
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={() => handleDeleteExpense(item.id, item.amount)}
+                  style={styles.actionIcon}
+                >
+                  <MaterialCommunityIcons
+                    name="trash-can-outline"
+                    size={20}
+                    color="#FF6384"
+                  />
+                </Pressable>
+              </View>
             </View>
           )}
-          keyExtractor={item => item.id}
+          keyExtractor={(item) => item.id}
           style={styles.list}
         />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
-// Styles 
+// Styles
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#1E1E1E',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    backgroundColor: "#1E1E1E",
   },
   container: {
     flex: 1,
-    padding: 20, 
+    padding: 20,
   },
-  titlu: {
+  title: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
+    fontWeight: "bold",
+    color: "white",
     marginBottom: 20,
     marginTop: 10,
   },
   label: {
-    color: '#aaa',
+    color: "#aaa",
     fontSize: 14,
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#333',
-    color: 'white',
+    backgroundColor: "#333",
+    color: "white",
     borderRadius: 10,
     paddingHorizontal: 15,
     paddingVertical: 12,
@@ -384,96 +462,118 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   pickerContainer: {
-    backgroundColor: '#333',
+    backgroundColor: "#333",
     borderRadius: 10,
     marginBottom: 15,
-    width: '100%',
-    borderWidth: Platform.OS === 'android' ? 1 : 0,
-    borderColor: '#333',
+    width: "100%",
+    borderWidth: Platform.OS === "android" ? 1 : 0,
+    borderColor: "#333",
   },
   picker: {
-    color: 'white',
+    color: "white",
     height: 50,
   },
+  customCategoryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 15,
+    gap: 8,
+  },
+  customCategoryInput: {
+    flex: 1,
+    backgroundColor: "#333",
+    color: "white",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  customCategoryButton: {
+    backgroundColor: "#4BC0C0",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  customCategoryButtonText: {
+    color: "white",
+    fontWeight: "700",
+  },
   buttonPrimary: {
-    backgroundColor: '#007AFF',
+    backgroundColor: "#007AFF",
     padding: 15,
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: 10,
     marginTop: 10,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
   },
   buttonPrimaryText: {
-    color: 'white',
+    color: "white",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
+  },
+  buttonCancel: {
+    padding: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  buttonCancelText: {
+    color: "#aaa",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  formButtons: {
+    marginTop: 5,
+    marginBottom: 10,
   },
   separator: {
     height: 1,
-    backgroundColor: '#444',
+    backgroundColor: "#444",
     marginVertical: 20,
   },
   list: {
-    marginTop: 0, 
+    marginTop: 0,
   },
-  listItem: {
-    backgroundColor: '#333',
-    padding: 12,
+  transactionItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#2A2A2A",
+    padding: 15,
     borderRadius: 12,
     marginBottom: 10,
-    flexDirection: 'row', 
-    alignItems: 'center', 
   },
   iconContainer: {
-    width: 45,
-    height: 45,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
-  listItemContinut: {
-    flex: 1, 
-  },
-  optionsButton: {
-    padding: 5,
-    marginLeft: 5,
-  },
-  optionsButtonText: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: 'bold',
-    lineHeight: 20,
-  },
-  listItemAntet: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 5,
-  },
-  listItemDetalii: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 5,
-  },
-  listTextDescriere: {
-    color: 'white',
+  transName: {
+    color: "white",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "500",
   },
-  listTextCategorie: {
-    color: '#aaa',
-    fontSize: 14,
-    fontStyle: 'italic',
+  transDate: {
+    color: "#888",
+    fontSize: 12,
+    marginTop: 2,
   },
-  listTextSuma: {
-    color: 'lightgreen',
-    fontSize: 14,
-    fontWeight: 'bold',
+  transValue: {
+    color: "lightgreen",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginRight: 10,
   },
-  listTextData: {
-    color: 'grey',
-    fontSize: 14,
+  transActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  actionIcon: {
+    padding: 5,
   },
 });

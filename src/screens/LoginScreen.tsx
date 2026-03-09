@@ -1,58 +1,53 @@
-import React, { useState } from "react"; // Am adăugat useState
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useState } from "react";
 import {
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Alert,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { supabase } from "../lib/supabaseClient";
+import { useAppStore } from "../store/useAppStore";
 
-// 'navigation' ne lasă să mergem la Signup
-// 'onLogin' este o funcție pe care o vom "trimite" din App.tsx
-export default function LoginScreen({
-  navigation,
-  onLogin,
-  onGuestLogin,
-}: {
-  navigation: any;
-  onLogin: any;
-  onGuestLogin: any;
-}) {
-  // Stări pentru email și parolă
+// `navigation` is used to open the Signup screen.
+export default function LoginScreen({ navigation }: { navigation: any }) {
+  const setAuthStatus = useAppStore((state) => state.setAuthStatus);
+
+  // Local form state
   const [email, setEmail] = useState("");
-  const [parola, setParola] = useState("");
-  const [loading, setLoading] = useState(false); // Stare pentru a bloca butonul de login in timp ce asteptam logarea
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false); // Block buttons while auth request is pending.
 
   const handleLoginClick = async () => {
-    if (!email || !parola) {
+    if (!email || !password) {
       Alert.alert("Error", "Please enter the email and password.");
       return;
     }
-    setLoading(true); // Începem încărcarea
+    setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email,
-        password: parola,
+        password: password,
       });
       if (error) {
         Alert.alert("Error in Login", error.message);
       } else if (data.user) {
-        onLogin(); // Apelăm funcția trimisă din App.tsx
+        setAuthStatus("loggedIn");
       }
     } catch (e) {
       console.log(e);
       Alert.alert("Error", "Unexpected error.");
     } finally {
-      setLoading(false); // Oprim încărcarea, indiferent de rezultat
+      setLoading(false);
     }
   };
   return (
     <View style={styles.container}>
       <Text style={styles.text}>Welcome!</Text>
 
-      {/* Câmpul pentru Email */}
+      {/* Email field */}
       <TextInput
         style={styles.input}
         placeholder="Email"
@@ -63,20 +58,20 @@ export default function LoginScreen({
         autoCapitalize="none"
       />
 
-      {/* Câmpul pentru Parolă */}
+      {/* Password field */}
       <TextInput
         style={styles.input}
         placeholder="Password"
         placeholderTextColor="#999"
-        secureTextEntry={true} // Ascunde textul
-        value={parola}
-        onChangeText={setParola}
+        secureTextEntry={true} // Hide password input.
+        value={password}
+        onChangeText={setPassword}
         autoCapitalize="none"
       />
       <Pressable
         style={styles.buttonPrimary}
         onPress={handleLoginClick}
-        disabled={loading} // Dezactivează butonul dacă se încarcă
+        disabled={loading} // Disable while loading.
         android_ripple={{ color: "#0056b3" }}
       >
         <Text style={styles.buttonPrimaryText}>
@@ -87,15 +82,18 @@ export default function LoginScreen({
       <Pressable
         style={styles.buttonSecondary}
         onPress={() => navigation.navigate("Signup")}
-        disabled={loading} // Dezactivează butonul dacă se încarcă
+        disabled={loading} // Disable while loading.
       >
         <Text style={styles.buttonSecondaryText}>Sign up</Text>
       </Pressable>
 
       <Pressable
         style={styles.buttonGuest}
-        onPress={onGuestLogin}
-        disabled={loading} // Dezactivează butonul dacă se încarcă
+        onPress={async () => {
+          await AsyncStorage.setItem("shouldOpenInitialSetup", "true");
+          setAuthStatus("guest");
+        }}
+        disabled={loading} // Disable while loading.
       >
         <Text style={styles.buttonGuestText}>Continue as Guest</Text>
       </Pressable>
@@ -138,14 +136,14 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 20, // Spațiu pe margini
-    backgroundColor: "#fff", // Fundal alb (sau ce culoare vrei)
+    padding: 20, // Screen padding.
+    backgroundColor: "#fff", // Light auth background.
   },
   text: {
     fontSize: 24,
     marginBottom: 20,
   },
-  // Stilul pentru câmpurile de text
+  // Text input style
   input: {
     width: "80%",
     backgroundColor: "#eee",

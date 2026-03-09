@@ -1,55 +1,53 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useState } from "react";
 import {
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Alert,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-// Importăm clientul nostru Supabase
+// Supabase client
 import { supabase } from "../lib/supabaseClient";
+import { useAppStore } from "../store/useAppStore";
 
-// Am eliminat 'onSignup' de aici, vom gestiona logica local
 export default function SignupScreen({ navigation }: { navigation: any }) {
-  const [email, setEmail] = useState("");
-  const [parola, setParola] = useState("");
-  const [loading, setLoading] = useState(false); // Stare pentru a bloca butonul
+  const setAuthStatus = useAppStore((state) => state.setAuthStatus);
 
-  // Funcția reală de Înregistrare
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false); // Block buttons while request is pending.
+
+  // Signup action
   const handleSignupClick = async () => {
-    if (!email || !parola) {
+    if (!email || !password) {
       Alert.alert("Error", "Please enter the email and password.");
       return;
     }
 
-    setLoading(true); // Începem încărcarea
+    setLoading(true);
     try {
-      // Comanda Supabase pentru a crea un cont nou
+      // Supabase signup command
       const { error } = await supabase.auth.signUp({
         email: email,
-        password: parola,
+        password: password,
       });
 
       if (error) {
-        // Dacă Supabase dă o eroare (ex: parola prea scurtă, email invalid)
         Alert.alert("Sign up error", error.message);
       } else {
-        // A funcționat!
-        Alert.alert(
-          "Check the email",
-          "We have sent you a confirmation link to your email address. Please click on it to activate your account.",
-        );
-        // Putem naviga înapoi la Login automat
-        navigation.goBack();
+        await AsyncStorage.setItem("shouldOpenInitialSetup", "true");
+        // Auto-login after successful signup
+        setAuthStatus("loggedIn");
       }
     } catch (e) {
       console.log(e);
-      // Eroare neașteptată
+      // Unexpected error
       Alert.alert("Error", "Unexpected error.");
     } finally {
-      setLoading(false); // Oprim încărcarea, indiferent de rezultat
+      setLoading(false);
     }
   };
 
@@ -75,23 +73,23 @@ export default function SignupScreen({ navigation }: { navigation: any }) {
           placeholder="Password (at least 6 characters)"
           placeholderTextColor="#999"
           secureTextEntry={true}
-          value={parola}
-          onChangeText={setParola}
+          value={password}
+          onChangeText={setPassword}
           autoCapitalize="none"
         />
 
-        {/* Butonul de Înregistrare (folosim <Pressable>) */}
+        {/* Signup button */}
         <Pressable
           style={styles.buttonPrimary}
           onPress={handleSignupClick}
-          disabled={loading} // Butonul e dezactivat în timpul încărcării
+          disabled={loading} // Disable while loading.
         >
           <Text style={styles.buttonPrimaryText}>
             {loading ? "Loading..." : "Sign up"}
           </Text>
         </Pressable>
 
-        {/* Link-ul de navigare înapoi la Login */}
+        {/* Back link to Login */}
         <Pressable
           style={styles.buttonSecondary}
           onPress={() => navigation.goBack()}
@@ -106,7 +104,7 @@ export default function SignupScreen({ navigation }: { navigation: any }) {
   );
 }
 
-// Folosim stiluri similare cu cele de la Login
+// Styles aligned with Login screen.
 const styles = StyleSheet.create({
   container: {
     flex: 1,
